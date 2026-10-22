@@ -9,8 +9,8 @@ const Envs = {
     MONGO_URL: env.MONGO_URL,
     JWT_SECRET: env.JWT_SECRET,
     GRPC_PORT: env.GRPC_PORT || 3002,
-    INTERNAL_GRPC_KEY: env.INTERNAL_GRPC_KEY || "ecommerce_grpc_internal_secret_key_2026",
-    PRODUCT_GRPC_URL: env.PRODUCT_GRPC_URL || "127.0.0.1:3001",
+    INTERNAL_GRPC_KEY: env.INTERNAL_GRPC_KEY,
+    PRODUCT_GRPC_URL: env.PRODUCT_GRPC_URL,
 };
 
 export default Envs;

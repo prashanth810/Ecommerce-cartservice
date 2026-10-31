@@ -6,6 +6,7 @@ import Envs from "./utils/Envs.js";
 import Cartroute from "./routes/Cartroute.js";
 import Whichlistroute from "./routes/Whichlistroute.js";
 import startGrpcServer from "./grpc/grpcServer.js";
+import healthRouter from "./health/health.routes.js";
 
 
 const app = express();
@@ -21,6 +22,8 @@ app.use(morgan("dev"));
 app.use("/api/auth/v3", Cartroute);
 app.use("/api/auth/v3", Whichlistroute);
 
+
+app.use("/health", healthRouter); // HEALTH (before all other routes)
 
 ConnectionDb().then(() => {
     app.listen(PORT, () => {

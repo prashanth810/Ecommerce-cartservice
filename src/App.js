@@ -17,6 +17,9 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cors());
 app.use(morgan("dev"));
 
+app.get("/", (req, res) => {
+    return res.status(200).json({ success: true, message: "Cart service running from app" })
+})
 
 // routes 
 app.use("/api/auth/v3", Cartroute);

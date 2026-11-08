@@ -41,8 +41,10 @@ const callGrpc = (client, method, payload) =>
         });
     });
 
-// gRPC path — works on localhost where both services share the same machine.
+// gRPC path — only used when PRODUCT_GRPC_URL is set (local / same network).
+// On Render this env is normally empty, so we skip gRPC and go straight to HTTP.
 const getsingleproductGrpc = async (productId) => {
+    if (!Envs.PRODUCT_GRPC_URL) return null;
     try {
         const client = getProductClient();
         const response = await callGrpc(client, "GetProductById", { productId: String(productId) });
@@ -53,47 +55,62 @@ const getsingleproductGrpc = async (productId) => {
     }
 };
 
-// HTTP fallback — used when gRPC is unreachable (e.g. on Render where each service
-// is a separate deployment and only the HTTP port is exposed).
-// Normalizes the REST response to the same shape the gRPC path returns.
+// HTTP path — used on Render (each service is a separate deployment).
+// Returns the normalized product, or null ONLY when the product really doesn't exist (404).
+// Throws when the product service is misconfigured / down, so the real reason is visible
+// instead of a misleading "Product not found".
 const getsingleproductHttp = async (productId) => {
-    const baseUrl = Envs.PRODUCT_SERVICE_URL;
-    if (!baseUrl) return null;
-
-    try {
-        const { data } = await axios.get(`${baseUrl}/api/auth/v2/product/${productId}`, {
-            timeout: 8000,
-        });
-
-        if (!data?.success || !data?.data) return null;
-
-        const p = data.data;
-        const variants = (p.variants || []).map((v) => ({
-            weight: v.weight || "",
-            original_price: String(v.original_price ?? ""),
-            selling_price: String(v.selling_price ?? ""),
-            discount_price: String(v.discount_price ?? ""),
-            stock: Number(v.stock ?? v.stock_quantity ?? 0),
-            stock_quantity: Number(v.stock_quantity ?? v.stock ?? 0),
-        }));
-
-        return {
-            id: String(p._id || p.id || ""),
-            name: p.name || "",
-            description: p.description || "",
-            thumbnail: p.thumbnail || "",
-            images: Array.isArray(p.images) ? p.images : [],
-            variants,
-            is_active: p.is_active !== false,
-        };
-    } catch (error) {
-        console.error("Cartservice HTTP GetProductById error:", error.message);
-        return null;
+    const baseUrl = (Envs.PRODUCT_SERVICE_URL || "").trim().replace(/\/+$/, "");
+    if (!baseUrl) {
+        throw new Error("PRODUCT_SERVICE_URL is not set on the cart service (Render > Environment)");
     }
+
+    const apiPath = process.env.PRODUCT_API_PATH || "/api/auth/v2/product";
+    const url = `${baseUrl}${apiPath}/${productId}`;
+
+    let lastError;
+    // Render free instances sleep -> first call can take 30-60s, so long timeout + 1 retry
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const { data } = await axios.get(url, { timeout: 60000 });
+
+            // support { data: {...} } | { product: {...} } | { data: { product: {...} } }
+            const p = data?.data?.product || data?.data || data?.product;
+            if (!data?.success || !p) return null;
+
+            const variants = (p.variants || []).map((v) => ({
+                weight: v.weight || "",
+                original_price: String(v.original_price ?? ""),
+                selling_price: String(v.selling_price ?? ""),
+                discount_price: String(v.discount_price ?? ""),
+                stock: Number(v.stock ?? v.stock_quantity ?? 0),
+                stock_quantity: Number(v.stock_quantity ?? v.stock ?? 0),
+            }));
+
+            return {
+                id: String(p._id || p.id || productId),
+                name: p.name || "",
+                description: p.description || "",
+                thumbnail: p.thumbnail || "",
+                images: Array.isArray(p.images) ? p.images : [],
+                variants,
+                is_active: p.is_active !== false,
+            };
+        } catch (error) {
+            const status = error.response?.status;
+            console.error(`Cartservice HTTP GetProductById attempt ${attempt} failed: ${url} ->`, status || error.code || error.message);
+
+            if (status === 404) return null;   // product genuinely not found
+            lastError = error;
+        }
+    }
+
+    throw new Error(
+        `Product service unreachable (${lastError?.response?.status || lastError?.code || lastError?.message}) at ${url}`
+    );
 };
 
-// Try gRPC first (fast path for local dev). If it fails or returns null,
-// fall back to the Product service's public REST endpoint (deployed env).
+// Try gRPC first only if configured, otherwise (or if it returns nothing) use HTTP.
 const getsingleproduct = async (productId) => {
     const product = await getsingleproductGrpc(productId);
     if (product) return product;
